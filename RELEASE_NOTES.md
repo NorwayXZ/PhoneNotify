@@ -1,9 +1,12 @@
-首个版本。
+**通知弹窗全新设计**
+- 原生风格卡片：App 彩色图标 + App 名与时间 + 粗体发送人 + 正文，毛玻璃背景，自动适配深色/浅色
+- 滑入 / 滑出动画，堆叠自动补位
+- 悬停显示关闭按钮，悬停时不会自动消失；向右拖动即可划掉
+- 点击展开全文（可选中文字），附「复制 / 查看记录 / 收起」
+- 验证码独立卡片（大字号，已复制到剪贴板）
+- 来电：红色挂断 / 绿色接听圆角按钮
+- 设置页新增测试按钮（微信 / 验证码 / 来电）
 
-**下载**
-- `PhoneNotify-macOS-*.zip`：Mac 程序（通用版，macOS 13+）。解压拖进「应用程序」，首次打开右键 → 打开。
-- `PhoneNotify-firmware-esp32s3.bin`：ESP32-S3 板子固件，用仓库里的 `flash-firmware.sh` 烧录。
+板子固件与 1.0.0 相同，无需重新烧录。
 
-或一行安装：`curl -fsSL https://raw.githubusercontent.com/NorwayXZ/PhoneNotify/main/install.sh | zsh`
-
-完整说明见 README。
+**安装 / 更新**：`curl -fsSL https://raw.githubusercontent.com/NorwayXZ/PhoneNotify/main/install.sh | zsh`
