@@ -155,7 +155,8 @@ final class AppModel: ObservableObject {
             battery = v
             if v <= 20 && !lowBatteryWarned {
                 lowBatteryWarned = true
-                Banner.shared.show(uid: 0xFFFFFFFE, title: "🔋 iPhone 电量低：\(v)%", body: "记得给手机充电", isCall: false)
+                Banner.shared.show(uid: 0xFFFFFFFE, title: "iPhone 电量低：\(v)%", body: "记得给手机充电", isCall: false,
+                                   appName: "iPhone", symbol: "battery.25percent", tint: .orange)
             }
             if v >= 25 { lowBatteryWarned = false }
         case "m":
@@ -287,12 +288,14 @@ final class AppModel: ObservableObject {
         else { claudeSessions[sid] = (st, Date(), project) }
         if st == "waiting" {
             let msg = j["message"] as? String ?? "需要你确认"
-            Banner.shared.show(uid: 0xFFFFFF00, title: "🤖 Claude Code · \(project)", body: msg, isCall: false, sticky: true)
+            Banner.shared.show(uid: 0xFFFFFF00, title: "需要你确认 · \(project)", body: msg, isCall: false, sticky: true,
+                               appName: "Claude Code", symbol: "sparkles", tint: .purple)
             if playSound { NSSound(named: "Funk")?.play() }
             if claudeSpeak && !leftHandled { Speaker.shared.say("Claude 需要你确认") }
         } else if st == "done" {
             Banner.shared.remove(uid: 0xFFFFFF00)
-            if claudeBannerDone { Banner.shared.show(uid: 0xFFFFFF01, title: "🤖 Claude Code 完成了", body: project, isCall: false) }
+            if claudeBannerDone { Banner.shared.show(uid: 0xFFFFFF01, title: "完成了", body: project, isCall: false,
+                                                    appName: "Claude Code", symbol: "checkmark.seal.fill", tint: .purple) }
             if claudeSpeak && !leftHandled { Speaker.shared.say("Claude 完成了") }
         } else if st == "working" {
             Banner.shared.remove(uid: 0xFFFFFF00)

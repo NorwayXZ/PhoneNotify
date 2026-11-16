@@ -280,7 +280,11 @@ struct DevicePane: View {
             Toggle("收到验证码自动复制到剪贴板", isOn: $m.copyCodes)
             Toggle("弹窗时播放提示音", isOn: $m.playSound)
             Stepper("普通弹窗显示 \(m.bannerSeconds) 秒（来电固定 40 秒）", value: $m.bannerSeconds, in: 3...30)
-            Button { Banner.shared.show(uid: 0, title: "微信 · 测试", body: "这是一条测试弹窗", isCall: false) } label: { Label("发一条测试弹窗", systemImage: "rectangle.badge.plus") }
+            HStack {
+                Button { NotificationPoster.shared.post(uid: 0xFFFFF000, app: "com.tencent.xin", isCall: false, title: "张三", subtitle: "", message: "晚上一起吃饭吗？我在公司楼下那家火锅店订了位，七点见，不见不散。顺便把上次借你的书带过来。", code: nil) } label: { Label("测试：微信", systemImage: "message") }
+                Button { NotificationPoster.shared.post(uid: 0xFFFFF001, app: "com.apple.MobileSMS", isCall: false, title: "106550", subtitle: "", message: "【淘宝】验证码 384921，5 分钟内有效，请勿泄露。", code: "384921") } label: { Label("测试：验证码", systemImage: "key") }
+                Button { NotificationPoster.shared.post(uid: 0xFFFFF002, app: "com.apple.mobilephone", isCall: true, title: "妈妈", subtitle: "", message: "", code: nil) } label: { Label("测试：来电", systemImage: "phone") }
+            }
         }
         Card(title: "ESP32 板子", icon: "cpu") {
             LabeledContent("USB 端口", value: m.port ?? "未检测到")
