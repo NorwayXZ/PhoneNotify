@@ -1,0 +1,28 @@
+name: MacNotifyCompanion
+options:
+  bundleIdPrefix: ${BUNDLE_PREFIX}
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  MacNotifyCompanion:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: ${BUNDLE_PREFIX}.macnotify.companion
+        DEVELOPMENT_TEAM: ${DEVELOPMENT_TEAM}
+        CODE_SIGN_STYLE: Automatic
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Mac通知
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: 连接 Mac，让 Mac 实时收到 iPhone 通知
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    info:
+      path: Sources/Info.plist
+      properties:
+        UIBackgroundModes: [bluetooth-central, bluetooth-peripheral]
+        UILaunchScreen: {}
+        NSBluetoothAlwaysUsageDescription: 连接 Mac，让 Mac 实时收到 iPhone 通知
+        CFBundleDisplayName: Mac通知

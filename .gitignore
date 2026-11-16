@@ -1,0 +1,11 @@
+build/
+dist/
+legacy/
+.DS_Store
+esp32/.pio/
+esp32/.venv/
+esp32/serial_log.py
+iOS/build/
+iOS/*.xcodeproj/
+iOS/Sources/Info.plist
+*.log
