@@ -42,6 +42,14 @@ final class AppModel: ObservableObject {
     @Published var radarConfig: RadarConfig? = MiRadar.loadConfig() { didSet { MiRadar.saveConfig(radarConfig); radar.config = radarConfig; radarReading = nil } }
     @Published var radarReading: RadarReading?
     @Published var radarStatus = "未配置"
+    // simple leave setting: "not at the desk for N seconds"
+    @Published var leaveSeconds = I("leaveSeconds", 5)               { didSet { ud.set(leaveSeconds, forKey: "leaveSeconds"); awayDelay = leaveSeconds; radarLeaveSeconds = 0; syncRadarDelay(force: true) } }
+    @Published var sleepDisplayOnLeave = B("sleepDisplayOnLeave", true) { didSet { ud.set(sleepDisplayOnLeave, forKey: "sleepDisplayOnLeave") } }
+    /// 0 radar only, 1 iPhone only, 2 both must say "away"
+    var detectBy: Int {
+        get { phoneEnabled && radarEnabled ? 2 : phoneEnabled ? 1 : 0 }
+        set { combineMode = 0; phoneEnabled = newValue >= 1; radarEnabled = newValue != 1 }
+    }
     // leave detection sources (each configured on its own)
     @Published var phoneEnabled = B("phoneEnabled", MiRadar.loadConfig() == nil) { didSet { ud.set(phoneEnabled, forKey: "phoneEnabled"); resetLeave() } }
     @Published var phoneReturnRSSI = I("phoneReturnRSSI", -72)        { didSet { ud.set(phoneReturnRSSI, forKey: "phoneReturnRSSI") } }
@@ -110,7 +118,7 @@ final class AppModel: ObservableObject {
     private var rssiSamples = 0
     private var lowBatteryWarned = false
 
-    var anyLeaveAction: Bool { leaveEnabled && (pauseMediaOnLeave || muteOnLeave || autoLock) }
+    var anyLeaveAction: Bool { leaveEnabled && (pauseMediaOnLeave || muteOnLeave || autoLock || sleepDisplayOnLeave) }
 
     private var historyURL: URL {
         let d = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/PhoneNotify")
@@ -137,6 +145,8 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             if r.occupied != self.lastOccupied { log("radar occupied=\(r.occupied.map { "\($0)" } ?? "?") dist=\(r.distance ?? -1)"); self.lastOccupied = r.occupied }
             self.radarReading = r
+            PresenceLog.shared.update(occupied: r.occupied, noOneDelay: r.noOneSeconds ?? self.leaveSeconds)
+            self.syncRadarDelay()
             self.radarStatus = r.occupied == true ? "有人" : r.occupied == false ? "无人" : "未知"
         }
         radar.onError = { [weak self] e in if self?.radarStatus != e { log("radar error: \(e)") }; self?.radarStatus = e }
@@ -385,12 +395,11 @@ final class AppModel: ObservableObject {
         // radar
         var radarAway = false, radarBack = false
         if radarActive, let r = radarReading {
-            let far = radarFarMeters > 0 && (r.distance ?? 0) > radarFarMeters
-            let raw = r.occupied == false || far
+            let raw = r.occupied == false
             if raw { if radarAwaySince == nil { radarAwaySince = now } } else { radarAwaySince = nil }
             radarAwayFor = radarAwaySince.map { Int(now.timeIntervalSince($0)) }
             radarAway = (radarAwayFor ?? -1) >= radarLeaveSeconds
-            radarBack = r.occupied == true && !far
+            radarBack = r.occupied == true
         } else { radarAwaySince = nil; radarAwayFor = nil }
 
         var sources: [(away: Bool, back: Bool)] = []
@@ -420,9 +429,10 @@ final class AppModel: ObservableObject {
             guard on, !doneActions.contains(id) else { return }
             if t >= delay { doneActions.insert(id); log("leave action \(id) at +\(t)s"); f() } else { pending.append(delay - t) }
         }
-        run("pause", pauseMediaOnLeave, pauseDelay) { SystemControl.pauseMedia() }
-        run("mute", muteOnLeave, muteDelay) { if !SystemControl.isMuted { SystemControl.setMuted(true); mutedByUs = true } }
-        run("lock", autoLock, lockDelay) { SystemControl.lockScreen() }
+        run("pause", pauseMediaOnLeave, 0) { SystemControl.pauseMedia() }
+        run("mute", muteOnLeave, 0) { if !SystemControl.isMuted { SystemControl.setMuted(true); mutedByUs = true } }
+        run("lock", autoLock, 0) { SystemControl.lockScreen() }
+        run("sleep", sleepDisplayOnLeave, 0) { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { SystemControl.sleepDisplay() } }
         awayCountdown = pending.min()
         leaveStatus = pending.isEmpty ? "已离开 \(t) 秒" : "已离开 \(t) 秒，\(pending.min()!) 秒后执行下一个动作"
     }
@@ -433,6 +443,7 @@ final class AppModel: ObservableObject {
         if muteOnLeave && !SystemControl.isMuted { SystemControl.setMuted(true); mutedByUs = true }
         lastLeave = Date()
         if autoLock { SystemControl.lockScreen() }
+        if sleepDisplayOnLeave { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { SystemControl.sleepDisplay() } }
     }
 
     func performReturn() {
@@ -446,4 +457,14 @@ final class AppModel: ObservableObject {
 
     // sensor-side settings (written to the radar through the gateway)
     func writeRadar(_ siid: Int, _ piid: Int, _ value: Int) { radar.set(siid: siid, piid: piid, value: value) }
+
+    /// Keep the sensor's own "no one" time equal to the chosen leave seconds (radar mode).
+    private var lastRadarSync = Date.distantPast
+    func syncRadarDelay(force: Bool = false) {
+        guard radarEnabled, radarConfig != nil, let cur = radarReading?.noOneSeconds else { return }
+        let want = max(leaveSeconds, 2)
+        guard cur != want, force || Date().timeIntervalSince(lastRadarSync) > 60 else { return }
+        lastRadarSync = Date(); log("radar sync no-one time \(cur) -> \(want)")
+        writeRadar(2, 2, want)
+    }
 }

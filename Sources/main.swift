@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if !CommandLine.arguments.contains("--login") { showDashboard() }
     }
 
+    func applicationWillTerminate(_ n: Notification) { PresenceLog.shared.flush() }
     func applicationShouldHandleReopen(_ s: NSApplication, hasVisibleWindows: Bool) -> Bool { showDashboard(); return true }
 
     func setIcon(connected: Bool) {

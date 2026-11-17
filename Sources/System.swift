@@ -25,6 +25,7 @@ enum SystemControl {
         }
     }
 
+    static func sleepDisplay() { run("/usr/bin/pmset", ["displaysleepnow"]) }
     static func wakeDisplay() { run("/usr/bin/caffeinate", ["-u", "-t", "2"]) }
 
     /// Send the system-wide "pause" (not toggle) to whatever app owns Now Playing:

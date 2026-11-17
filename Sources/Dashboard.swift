@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum Pane: String, CaseIterable, Identifiable {
-    case overview = "概览", history = "通知记录", rules = "规则与播报", leave = "离开与返回",
+    case overview = "概览", history = "通知记录", rules = "规则与播报", leave = "离开与返回", desk = "在座记录",
          buttons = "按键与快捷键", claude = "Claude Code", forward = "离线转发", device = "设备与设置"
     var id: String { rawValue }
     var icon: String {
@@ -9,6 +9,7 @@ enum Pane: String, CaseIterable, Identifiable {
         case .overview: return "square.grid.2x2.fill"
         case .history: return "tray.full.fill"
         case .leave: return "figure.walk.departure"
+        case .desk: return "chart.bar.xaxis"
         case .rules: return "line.3.horizontal.decrease.circle.fill"
         case .buttons: return "button.programmable"
         case .claude: return "sparkles"
@@ -35,6 +36,7 @@ struct DashboardView: View {
                     case .overview: OverviewPane()
                     case .history: HistoryPane()
                     case .leave: LeavePane()
+                    case .desk: DeskPane()
                     case .rules: RulesPane()
                     case .buttons: ButtonsPane()
                     case .claude: ClaudePane()
@@ -251,120 +253,72 @@ struct NumField: View {
 
 struct LeavePane: View {
     @EnvironmentObject var m: AppModel
-    @State private var sensorNoOne = 30
-    @State private var sensorRange = 3
-    @State private var loadedSensor = false
-    var farBinding: Binding<Int> { Binding(get: { Int((m.radarFarMeters * 10).rounded()) }, set: { m.radarFarMeters = Double($0) / 10 }) }
+    @State private var advanced = false
+    var detect: Binding<Int> { Binding(get: { m.detectBy }, set: { m.detectBy = $0; m.objectWillChange.send() }) }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
             Text("离开与返回").font(.largeTitle.bold())
             Spacer()
             Toggle("", isOn: $m.leaveEnabled).toggleStyle(.switch).controlSize(.large).labelsHidden()
-                .help(m.leaveEnabled ? "点击关闭整个离开检测" : "点击开启离开检测")
         }
-        Text(m.leaveEnabled ? summary : "已关闭：不会因为你离开而暂停、静音或锁屏。").foregroundStyle(m.leaveEnabled ? .secondary : Color.orange)
+        Text(m.leaveEnabled ? "人不在电脑前超过设定秒数，就自动执行下面勾选的动作。" : "已关闭：不会因为你离开而暂停、息屏或锁屏。")
+            .foregroundStyle(m.leaveEnabled ? .secondary : Color.orange)
         Group {
-
-        // ---- live status
-        Card(title: "当前状态", icon: "waveform.path.ecg") {
-            HStack {
-                Text(m.leaveStatus.isEmpty ? "—" : m.leaveStatus).font(.headline)
-                Spacer()
-                if let c = m.awayCountdown { Text("\(c) 秒后执行").foregroundStyle(.orange).font(.headline.monospacedDigit()) }
-            }
-            if m.phoneEnabled && m.radarEnabled {
-                Picker("两种检测同时开启时", selection: $m.combineMode) {
-                    Text("都判定离开才执行（更稳）").tag(0); Text("任意一个判定离开就执行（更快）").tag(1)
-                }
-                Text(m.combineMode == 0 ? "回来时：任意一个判定你回来了，就算回来。" : "回来时：两个都判定你回来了，才算回来。").font(.caption).foregroundStyle(.secondary)
-            }
-        }
-
-        // ---- iPhone signal
-        Card(title: "iPhone 信号检测", icon: "iphone.radiowaves.left.and.right") {
-            Toggle("启用 iPhone 信号检测", isOn: $m.phoneEnabled)
-            if m.phoneEnabled {
-                HStack(spacing: 14) {
-                    SignalBars(rssi: m.rssi, threshold: m.lockThreshold)
-                    Text(m.link == .connected ? "当前信号 \(Int(m.rssi)) dBm" : "iPhone 未连接").font(.headline.monospacedDigit())
+            Card(title: "离开", icon: "figure.walk.departure") {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text("人不在电脑前").font(.title3)
+                    TextField("", value: Binding(get: { m.leaveSeconds }, set: { m.leaveSeconds = min(max($0, 2), 3600) }), format: .number.grouping(.never))
+                        .textFieldStyle(.roundedBorder).font(.title3.monospacedDigit()).multilineTextAlignment(.center).frame(width: 70)
+                    Text("秒后").font(.title3)
+                    Stepper("", value: $m.leaveSeconds, in: 2...3600).labelsHidden()
                     Spacer()
-                    if let s = m.phoneAwayFor { Text("已判定远离 \(s) 秒").foregroundStyle(.orange).font(.subheadline.monospacedDigit()) }
+                    if let c = m.awayCountdown { Text("\(c) 秒后执行").foregroundStyle(.orange).font(.headline.monospacedDigit()) }
                 }
-                NumField(label: "信号低于此值视为离开", value: $m.lockThreshold, range: -110 ... -40, unit: "dBm",
-                         note: "数值越小越远：约 -65 贴身 · -75 两三米 · -85 隔一个房间。")
-                NumField(label: "持续多少秒才判定离开", value: $m.awayDelay, range: 0...600, unit: "秒")
-                NumField(label: "信号高于此值视为回来", value: $m.phoneReturnRSSI, range: -110 ... -40, unit: "dBm",
-                         note: "建议比「离开」值高 5–10，避免在边界来回跳。")
-                Toggle("蓝牙断开也算离开", isOn: $m.phoneDisconnectIsAway)
-            }
-        }
-
-        // ---- radar
-        Card(title: "人在雷达检测", icon: "sensor.fill") {
-            if m.radarConfig == nil {
-                Text("未配置人在雷达。可在「设备与设置」里接入米家人体存在传感器。").font(.caption).foregroundStyle(.secondary)
-            } else {
-                Toggle("启用雷达检测", isOn: $m.radarEnabled)
-                if m.radarEnabled {
-                    RadarStatusRow()
-                    if !m.radarFresh { Text("雷达暂时读不到数据。").font(.caption).foregroundStyle(.orange) }
-                    if let s = m.radarAwayFor { Text("雷达已判定无人 \(s) 秒").foregroundStyle(.orange).font(.subheadline.monospacedDigit()) }
-                    NumField(label: "雷达报「无人」后再等", value: $m.radarLeaveSeconds, range: 0...600, unit: "秒",
-                             note: "传感器自己要先确认一段时间才会报「无人」（见下方）。这里是在那之后额外等待的时间，0 表示立即。")
-                    NumField(label: "距离超过此值也算离开（0 = 不用）", value: farBinding, range: 0...60, unit: "×0.1 米",
-                             note: m.radarFarMeters > 0 ? String(format: "当前：离雷达超过 %.1f 米即开始计时。", m.radarFarMeters) : "例如填 15 表示 1.5 米：你起身走远时比等「无人」更快。")
-                    Divider()
-                    Text("传感器自身设置（写入雷达，米家里也会同步改变）").font(.subheadline.bold())
-                    NumField(label: "无人判定时间", value: $sensorNoOne, range: 5...1800, unit: "秒",
-                             note: "多久没检测到人，雷达才报「无人」。当前雷达：\(m.radarReading?.noOneSeconds.map { "\($0) 秒" } ?? "未知")")
-                    NumField(label: "检测距离", value: $sensorRange, range: 1...5, unit: "米",
-                             note: "当前雷达：\(m.radarReading?.rangeMeters.map { "\($0) 米" } ?? "未知")")
-                    HStack {
-                        Button("写入雷达") { m.writeRadar(2, 2, sensorNoOne); m.writeRadar(3, 4, sensorRange) }
-                        Text("约 1–2 秒后生效").font(.caption).foregroundStyle(.secondary)
-                    }
+                Toggle("暂停正在播放的视频、直播、音乐", isOn: $m.pauseMediaOnLeave)
+                Toggle("息屏（关闭显示器）", isOn: $m.sleepDisplayOnLeave)
+                Toggle("锁定屏幕", isOn: $m.autoLock)
+                Toggle("Mac 静音", isOn: $m.muteOnLeave)
+                HStack {
+                    Button { m.performLeave(test: true) } label: { Label("立即试一次", systemImage: "play.fill") }
+                    Spacer()
+                    if let t = m.lastLeave { Text("上次离开：\(t.formatted(date: .omitted, time: .standard))").font(.caption).foregroundStyle(.secondary) }
                 }
             }
-        }
-        .onReceive(m.$radarReading) { r in
-            guard !loadedSensor, let r else { return }
-            if let v = r.noOneSeconds { sensorNoOne = v }; if let v = r.rangeMeters { sensorRange = v }
-            loadedSensor = r.noOneSeconds != nil
-        }
 
-        // ---- actions
-        Card(title: "离开时执行（从判定离开那一刻起计时）", icon: "figure.walk.departure") {
-            ActionRow(title: "暂停 Mac 上的视频、直播、音乐", on: $m.pauseMediaOnLeave, delay: $m.pauseDelay)
-            ActionRow(title: "Mac 静音", on: $m.muteOnLeave, delay: $m.muteDelay)
-            ActionRow(title: "锁定屏幕", on: $m.autoLock, delay: $m.lockDelay)
-            HStack {
-                Button { m.performLeave(test: true) } label: { Label("立即模拟一次离开", systemImage: "play.fill") }
-                if m.autoLock { Text("会真的锁屏").font(.caption).foregroundStyle(.secondary) }
-                Spacer()
-                if let t = m.lastLeave { Text("上次离开：\(t.formatted(date: .omitted, time: .standard))").font(.caption).foregroundStyle(.secondary) }
+            Card(title: "回来", icon: "figure.walk.arrival") {
+                Toggle("自动点亮屏幕", isOn: $m.wakeOnReturn)
+                Toggle("恢复声音（仅限离开时由本程序静音的情况）", isOn: $m.unmuteOnReturn).disabled(!m.muteOnLeave)
+                if let t = m.lastReturn { Text("上次回来：\(t.formatted(date: .omitted, time: .standard))").font(.caption).foregroundStyle(.secondary) }
             }
-        }
 
-        Card(title: "回来时", icon: "figure.walk.arrival") {
-            NumField(label: "判定回来后再等", value: $m.returnConfirmSeconds, range: 0...120, unit: "秒", note: "0 表示一检测到你就算回来。")
-            Toggle("自动点亮屏幕（等你输入密码）", isOn: $m.wakeOnReturn)
-            Toggle("恢复声音（仅限离开时由本程序静音的情况）", isOn: $m.unmuteOnReturn).disabled(!m.muteOnLeave)
-            if let t = m.lastReturn { Text("上次回来：\(t.formatted(date: .omitted, time: .standard))").font(.caption).foregroundStyle(.secondary) }
-        }
+            Card(title: "怎么判断你不在", icon: "sensor.fill") {
+                Picker("", selection: detect) {
+                    Text("人在雷达").tag(0); Text("iPhone 信号").tag(1); Text("两个都离开").tag(2)
+                }.pickerStyle(.segmented).labelsHidden()
+                if m.detectBy != 1 {
+                    if m.radarConfig == nil { Text("未配置雷达，请在「设备与设置」里接入。").font(.caption).foregroundStyle(.orange) }
+                    else { RadarStatusRow() }
+                }
+                if m.detectBy != 0 {
+                    HStack { SignalBars(rssi: m.rssi, threshold: m.lockThreshold); Text(m.link == .connected ? "iPhone 信号 \(Int(m.rssi)) dBm" : "iPhone 未连接").monospacedDigit() }
+                }
+                DisclosureGroup("高级", isExpanded: $advanced) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if m.detectBy != 0 {
+                            NumField(label: "iPhone 信号低于此值算离开", value: $m.lockThreshold, range: -110 ... -40, unit: "dBm", note: "约 -65 贴身 · -75 两三米 · -85 隔一个房间")
+                            NumField(label: "iPhone 信号高于此值算回来", value: $m.phoneReturnRSSI, range: -110 ... -40, unit: "dBm")
+                        }
+                        if m.detectBy != 1, m.radarConfig != nil {
+                            NumField(label: "雷达检测距离", value: Binding(get: { m.radarReading?.rangeMeters ?? 3 }, set: { m.writeRadar(3, 4, $0) }), range: 1...5, unit: "米",
+                                     note: "超出这个距离就当作不在电脑前。")
+                        }
+                    }.padding(.top, 6)
+                }
+            }
         }
         .disabled(!m.leaveEnabled)
         .opacity(m.leaveEnabled ? 1 : 0.45)
-    }
-
-    var summary: String {
-        let radar = m.radarEnabled && m.radarConfig != nil
-        switch (m.phoneEnabled, radar) {
-        case (true, true): return m.combineMode == 0 ? "已开启：iPhone 信号和雷达都判定你离开时，执行下面的动作。" : "已开启：iPhone 信号或雷达任意一个判定你离开，就执行下面的动作。"
-        case (true, false): return "已开启：只用 iPhone 信号判断是否离开。"
-        case (false, true): return "已开启：只用人在雷达判断是否离开。"
-        default: return "已开启，但没有启用任何检测方式——请在下面打开 iPhone 信号或雷达。"
-        }
     }
 }
 
