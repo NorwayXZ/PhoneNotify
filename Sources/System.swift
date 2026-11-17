@@ -43,10 +43,13 @@ enum SystemControl {
     /// "Develop > Allow JavaScript from Apple Events".
     static let chromiumBrowsers = ["com.citrolabs.ego.lite", "com.google.Chrome", "com.microsoft.edgemac", "com.brave.Browser",
                                    "com.vivaldi.Vivaldi", "company.thebrowser.Browser", "org.chromium.Chromium", "com.google.Chrome.canary"]
-    static let pauseJS = "(()=>{let n=0;const f=d=>{try{d.querySelectorAll('video,audio').forEach(m=>{if(!m.paused){m.pause();n++}});d.querySelectorAll('iframe').forEach(i=>{try{f(i.contentDocument)}catch(e){}})}catch(e){}};f(document);return n})()"
+    /// Pauses every playing <video>/<audio>, then keeps them paused + muted (live players auto-resume)
+    /// until the user clicks/presses a key in the page or PhoneNotify sees them come back.
+    static let pauseJS = "(()=>{const W=window;let n=0;const f=d=>{try{d.querySelectorAll('video,audio').forEach(m=>{if(!m.paused||m.__pn){if(!m.__pn)m.__pn={muted:m.muted};if(!m.paused){m.pause();n++}m.muted=true}});d.querySelectorAll('iframe').forEach(i=>{try{f(i.contentDocument)}catch(e){}})}catch(e){}};f(document);if(n&&!W.__pnClear){const c=()=>{clearInterval(W.__pnT);const g=d=>{try{d.querySelectorAll('video,audio').forEach(m=>{if(m.__pn){m.muted=m.__pn.muted;delete m.__pn}});d.querySelectorAll('iframe').forEach(i=>{try{g(i.contentDocument)}catch(e){}})}catch(e){}};g(document);['pointerdown','keydown'].forEach(t=>W.removeEventListener(t,c,true));W.__pnClear=null};W.__pnClear=c;W.__pnT=setInterval(()=>f(document),1000);['pointerdown','keydown'].forEach(t=>W.addEventListener(t,c,true))}return n})()"
+    static let releaseJS = "(()=>{if(window.__pnClear){window.__pnClear();return 1}return 0})()"
 
     /// Returns per-browser results like "ego lite: 2" or "ego lite: 需要开启「允许 Apple 事件中的 JavaScript」".
-    static func pauseBrowsers(_ done: (([String]) -> Void)? = nil) {
+    static func pauseBrowsers(js: String = pauseJS, _ done: (([String]) -> Void)? = nil) {
         let running = NSWorkspace.shared.runningApplications
         var jobs: [(name: String, script: String)] = []
         for app in running {
@@ -60,7 +63,7 @@ enum SystemControl {
                     repeat with w in windows
                         repeat with t in tabs of w
                             try
-                                set n to n + (execute t javascript "\(pauseJS)")
+                                set n to n + (execute t javascript "\(js)")
                             on error e
                                 set errs to e
                             end try
@@ -78,7 +81,7 @@ enum SystemControl {
                     repeat with w in windows
                         repeat with t in tabs of w
                             try
-                                set n to n + (do JavaScript "\(pauseJS)" in t)
+                                set n to n + (do JavaScript "\(js)" in t)
                             on error e
                                 set errs to e
                             end try

@@ -101,7 +101,7 @@ enum Pauser {
                 if SystemControl.chromiumBrowsers.contains(id) || id == "com.apple.Safari" || scriptable[id] != nil || neverKey.contains(id) { continue }
                 guard keyFallback else { report.append("\(app.localizedName ?? id): 仍在出声"); continue }
                 keyed.insert(app.processIdentifier)
-                sendSpace(to: app.processIdentifier)
+                sendSpace(to: app)
                 report.append("\(app.localizedName ?? id): 已发送空格键暂停")
             }
             // 5. check again
@@ -115,12 +115,18 @@ enum Pauser {
         }
     }
 
-    static func sendSpace(to pid: pid_t) {
-        if !CGPreflightPostEventAccess() { CGRequestPostEventAccess() }
+    /// Bring the app to the front, press Space, then give focus back (background apps ignore posted keys).
+    static func sendSpace(to app: NSRunningApplication) {
+        let ok = CGPreflightPostEventAccess()
+        if !ok { CGRequestPostEventAccess(); log("sendSpace: no post-event access") }
+        var prev: NSRunningApplication?
+        DispatchQueue.main.sync { prev = NSWorkspace.shared.frontmostApplication; app.activate() }
+        Thread.sleep(forTimeInterval: 0.45)
         let src = CGEventSource(stateID: .hidSystemState)
-        for down in [true, false] {
-            CGEvent(keyboardEventSource: src, virtualKey: 49, keyDown: down)?.postToPid(pid)
-        }
+        for down in [true, false] { CGEvent(keyboardEventSource: src, virtualKey: 49, keyDown: down)?.post(tap: .cghidEventTap) }
+        Thread.sleep(forTimeInterval: 0.25)
+        if let prev, prev != app { DispatchQueue.main.sync { _ = prev.activate() } }
+        log("sendSpace \(app.localizedName ?? "?") access=\(ok)")
     }
 
     static func appName(_ id: String) -> String {

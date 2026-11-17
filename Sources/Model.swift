@@ -71,7 +71,7 @@ final class AppModel: ObservableObject {
     @Published var muteIfStillPlaying = B("muteIfStillPlaying", true) { didSet { ud.set(muteIfStillPlaying, forKey: "muteIfStillPlaying") } }
 
     /// Pause every player (Now Playing, scriptable apps, browser tabs, anything still making sound).
-    func pauseEverything(test: Bool = false) {
+    func pauseEverything(test: Bool = false, then: (() -> Void)? = nil) {
         browserPauseResult = ["正在暂停…"]
         Pauser.pauseAll { [weak self] report, still in
             guard let self else { return }
@@ -81,6 +81,7 @@ final class AppModel: ObservableObject {
                 self.browserPauseResult.append("已静音兜底")
                 log("pauseAll: still sound -> muted")
             }
+            then?()
         }
     }
 
@@ -446,19 +447,26 @@ final class AppModel: ObservableObject {
             guard on, !doneActions.contains(id) else { return }
             if t >= delay { doneActions.insert(id); log("leave action \(id) at +\(t)s"); f() } else { pending.append(delay - t) }
         }
-        run("pause", pauseMediaOnLeave, 0) { pauseEverything() }
         run("mute", muteOnLeave, 0) { if !SystemControl.isMuted { SystemControl.setMuted(true); mutedByUs = true } }
-        run("lock", autoLock, 0) { SystemControl.lockScreen() }
-        run("sleep", sleepDisplayOnLeave, 0) { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { SystemControl.sleepDisplay() } }
+        if !doneActions.contains("pause") {
+            // pause first (it may need to focus apps and press keys), then lock / sleep the display
+            doneActions.formUnion(["pause", "lock", "sleep"])
+            log("leave actions: pause=\(pauseMediaOnLeave) lock=\(autoLock) sleep=\(sleepDisplayOnLeave)")
+            if pauseMediaOnLeave { pauseEverything(then: { [weak self] in self?.lockAndSleep() }) } else { lockAndSleep() }
+        }
         awayCountdown = pending.min()
         leaveStatus = pending.isEmpty ? "已离开 \(t) 秒" : "已离开 \(t) 秒，\(pending.min()!) 秒后执行下一个动作"
     }
 
     func performLeave(test: Bool = false) {
         log("leave (test=\(test) linked=\(phoneLinked) rssi=\(Int(rssi)) radar=\(radarStatus))")
-        if pauseMediaOnLeave { pauseEverything() }
         if muteOnLeave && !SystemControl.isMuted { SystemControl.setMuted(true); mutedByUs = true }
         lastLeave = Date()
+        if pauseMediaOnLeave { pauseEverything(then: { [weak self] in self?.lockAndSleep(force: true) }) } else { lockAndSleep(force: true) }
+    }
+
+    func lockAndSleep(force: Bool = false) {
+        guard leftHandled || force else { log("leave: back before lock, skipped"); return }   // user came back meanwhile
         if autoLock { SystemControl.lockScreen() }
         if sleepDisplayOnLeave { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { SystemControl.sleepDisplay() } }
     }
@@ -469,6 +477,7 @@ final class AppModel: ObservableObject {
         mutedByUs = false
         lastReturn = Date()
         resetLeave()
+        SystemControl.pauseBrowsers(js: SystemControl.releaseJS) { _ in }
         if wakeOnReturn { SystemControl.wakeDisplay() }
     }
 
