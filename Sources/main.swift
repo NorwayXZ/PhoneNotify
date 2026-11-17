@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
         info(m.link == .connected ? "● 已连接 iPhone" : "○ \(m.statusText)")
         if let b = m.battery { info("iPhone 电量 \(b)%") }
+        if m.radarConfig != nil { info("座位：\(m.radarStatus)\(m.radarReading?.distance.map { String(format: " · %.2f 米", $0) } ?? "")") }
         if let last = m.history.first { info("最近：\(last.appName) · \(last.title)") }
         menu.addItem(.separator())
         info(m.mTitle.isEmpty ? "♪ 未在播放" : "♪ \(m.mTitle)\(m.mArtist.isEmpty ? "" : " — \(m.mArtist)")")

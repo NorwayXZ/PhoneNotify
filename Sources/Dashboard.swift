@@ -238,9 +238,23 @@ struct LeavePane: View {
             Toggle("", isOn: $m.leaveEnabled).toggleStyle(.switch).controlSize(.large).labelsHidden()
                 .help(m.leaveEnabled ? "点击关闭整个离开检测" : "点击开启离开检测")
         }
-        Text(m.leaveEnabled ? "已开启：带着 iPhone 离开时（信号变弱或断开）自动执行下面勾选的动作。"
+        Text(m.leaveEnabled ? (m.radarMode == 1 && m.radarConfig != nil ? "已开启：雷达检测到座位无人时，自动执行下面勾选的动作。"
+                                : m.radarMode == 2 && m.radarConfig != nil ? "已开启：雷达无人且 iPhone 走远时，自动执行下面勾选的动作。"
+                                : "已开启：带着 iPhone 离开时（信号变弱或断开）自动执行下面勾选的动作。")
                             : "已关闭：不会因为你离开而暂停、静音或锁屏。").foregroundStyle(m.leaveEnabled ? .secondary : Color.orange)
         Group {
+
+        Card(title: "判断依据", icon: "sensor.fill") {
+            Picker("", selection: $m.radarMode) {
+                Text("只看 iPhone 信号").tag(0); Text("只看人在雷达").tag(1); Text("雷达 + iPhone 都离开").tag(2)
+            }.pickerStyle(.segmented).labelsHidden().disabled(m.radarConfig == nil)
+            if m.radarConfig == nil {
+                Text("未配置人在雷达，目前只用 iPhone 信号。可在「设备与设置」里接入米家人体存在传感器。").font(.caption).foregroundStyle(.secondary)
+            } else {
+                RadarStatusRow()
+                if m.radarMode > 0 && !m.radarFresh { Text("雷达暂时读不到，已临时改用 iPhone 信号判断。").font(.caption).foregroundStyle(.orange) }
+            }
+        }
 
         Card(title: "实时距离", icon: "location.fill") {
             HStack(spacing: 14) {
@@ -296,6 +310,7 @@ struct DevicePane: View {
                 Button { NotificationPoster.shared.post(uid: 0xFFFFF002, app: "com.apple.mobilephone", isCall: true, title: "妈妈", subtitle: "", message: "", code: nil) } label: { Label("测试：来电", systemImage: "phone") }
             }
         }
+        RadarSetupCard()
         Card(title: "ESP32 板子", icon: "cpu") {
             LabeledContent("USB 端口", value: m.port ?? "未检测到")
             LabeledContent("状态", value: m.statusText)
@@ -466,5 +481,59 @@ struct ForwardPane: View {
             Text("记得先在 Telegram 里给你的机器人发一句话（/start），它才能给你发消息。").font(.caption).foregroundStyle(.secondary)
         }
         .onAppear { ssid = m.wifiSSID; chat = m.tgChat }
+    }
+}
+
+struct RadarStatusRow: View {
+    @EnvironmentObject var m: AppModel
+    var body: some View {
+        let r = m.radarReading
+        HStack(spacing: 14) {
+            Image(systemName: r?.occupied == true ? "person.fill.checkmark" : r?.occupied == false ? "person.fill.xmark" : "person.fill.questionmark")
+                .font(.system(size: 26)).foregroundStyle(r?.occupied == true ? .green : r?.occupied == false ? .orange : .secondary).frame(width: 34)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(m.radarConfig?.name ?? "人在雷达").font(.headline)
+                Text(m.radarStatus + (r?.occupied == true ? (r?.presentMinutes).map { " · 已在座 \($0) 分钟" } ?? "" : r?.occupied == false ? (r?.absentMinutes).map { " · 已离开 \($0) 分钟" } ?? "" : ""))
+                    .font(.subheadline).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if let d = r?.distance { VStack(alignment: .trailing) { Text(String(format: "%.2f 米", d)).font(.title3.monospacedDigit()); Text("距离").font(.caption).foregroundStyle(.secondary) } }
+            if let l = r?.lux { VStack(alignment: .trailing) { Text("\(Int(l)) lx").font(.title3.monospacedDigit()); Text("光照").font(.caption).foregroundStyle(.secondary) } }
+        }
+    }
+}
+
+struct RadarSetupCard: View {
+    @EnvironmentObject var m: AppModel
+    @State private var ip = ""
+    @State private var token = ""
+    @State private var gw = ""
+    @State private var sensor = ""
+    @State private var name = ""
+    var body: some View {
+        Card(title: "人在雷达（米家）", icon: "sensor.fill") {
+            if m.radarConfig != nil { RadarStatusRow() }
+            Text("通过米家网关在本地读取人体存在传感器，不经过云端。网关 IP、token 和设备 did 可从小米云端设备清单获得。").font(.caption).foregroundStyle(.secondary)
+            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
+                GridRow { Text("网关 IP"); TextField("192.168.1.10", text: $ip) }
+                GridRow { Text("网关 token"); SecureField("32 位十六进制", text: $token) }
+                GridRow { Text("网关 did"); TextField("例如 123456789", text: $gw) }
+                GridRow { Text("传感器 did"); TextField("例如 1000000001", text: $sensor) }
+                GridRow { Text("名称"); TextField("人体存在传感器", text: $name) }
+            }.textFieldStyle(.roundedBorder)
+            HStack {
+                Button("保存") {
+                    m.radarConfig = RadarConfig(gatewayIP: ip.trimmingCharacters(in: .whitespaces), gatewayToken: token.trimmingCharacters(in: .whitespaces).lowercased(),
+                                                gatewayDid: gw.trimmingCharacters(in: .whitespaces), sensorDid: sensor.trimmingCharacters(in: .whitespaces),
+                                                name: name.isEmpty ? "人体存在传感器" : name)
+                }.disabled(ip.isEmpty || token.count != 32 || sensor.isEmpty)
+                if m.radarConfig != nil { Button("移除雷达", role: .destructive) { m.radarConfig = nil } }
+                Spacer()
+                Text(m.radarStatus).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .onAppear {
+            if let c = m.radarConfig { ip = c.gatewayIP; token = c.gatewayToken; gw = c.gatewayDid; sensor = c.sensorDid; name = c.name }
+        }
     }
 }

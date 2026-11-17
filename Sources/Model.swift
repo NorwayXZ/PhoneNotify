@@ -38,6 +38,11 @@ final class AppModel: ObservableObject {
     @Published var lastReturn: Date?
     @Published var awayCountdown: Int?
     @Published var requestedPane: String?          // seconds left before leave actions fire
+    // presence radar (Mi Home, via gateway)
+    @Published var radarConfig: RadarConfig? = MiRadar.loadConfig() { didSet { MiRadar.saveConfig(radarConfig); radar.config = radarConfig; radarReading = nil } }
+    @Published var radarReading: RadarReading?
+    @Published var radarStatus = "未配置"
+    @Published var radarMode = I("radarMode", 1)                      { didSet { ud.set(radarMode, forKey: "radarMode") } }   // 0 phone only, 1 radar only, 2 radar + phone
 
     // settings (persisted)
     @Published var leaveEnabled = B("leaveEnabled", true)             { didSet { ud.set(leaveEnabled, forKey: "leaveEnabled"); if !leaveEnabled { awaySince = nil; awayCountdown = nil; leftHandled = false } } }
@@ -82,6 +87,9 @@ final class AppModel: ObservableObject {
 
     let bridge = SerialBridge()
     let claude = ClaudeServer()
+    let radar = MiRadar()
+    private var lastOccupied: Bool?
+    var radarFresh: Bool { radarConfig != nil && radarReading.map { $0.occupied != nil && Date().timeIntervalSince($0.at) < 10 } == true }
     private var phoneLinked = false, everLinked = false, awaySince: Date?, mutedByUs = false
     var leftHandled = false
     private var rssiSamples = 0
@@ -110,6 +118,15 @@ final class AppModel: ObservableObject {
         bridge.start()
         Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.evaluateAway() }
         Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.bridge.send("HB") }
+        radar.onReading = { [weak self] r in
+            guard let self else { return }
+            if r.occupied != self.lastOccupied { log("radar occupied=\(r.occupied.map { "\($0)" } ?? "?") dist=\(r.distance ?? -1)"); self.lastOccupied = r.occupied }
+            self.radarReading = r
+            self.radarStatus = r.occupied == true ? "有人" : r.occupied == false ? "无人" : "未知"
+        }
+        radar.onError = { [weak self] e in if self?.radarStatus != e { log("radar error: \(e)") }; self?.radarStatus = e }
+        radar.config = radarConfig
+        radar.start()
         claude.onEvent = { [weak self] st, j in self?.claudeEvent(st, j) }
         claude.start()
     }
@@ -327,8 +344,16 @@ final class AppModel: ObservableObject {
 
     // MARK: leave / return
     func evaluateAway() {
-        guard bridge.fd >= 0, everLinked, anyLeaveAction else { awaySince = nil; awayCountdown = nil; return }
-        let away = !phoneLinked || rssi < Double(lockThreshold)
+        let phoneOK = bridge.fd >= 0 && everLinked
+        let useRadar = radarMode > 0 && radarFresh
+        let usePhone = radarMode != 1 || !useRadar          // radar-only falls back to the phone if radar data is stale
+        guard anyLeaveAction, useRadar || (usePhone && phoneOK) else { awaySince = nil; awayCountdown = nil; return }
+        let phoneAway = !phoneLinked || rssi < Double(lockThreshold)
+        let radarAway = radarReading?.occupied == false
+        let away: Bool
+        if useRadar && radarMode == 1 { away = radarAway }
+        else if useRadar { away = radarAway && (!phoneOK || phoneAway) }
+        else { away = phoneAway }
         if away {
             if awaySince == nil { awaySince = Date() }
             let elapsed = Date().timeIntervalSince(awaySince!)
@@ -336,12 +361,13 @@ final class AppModel: ObservableObject {
             if !leftHandled && elapsed >= Double(awayDelay) { leftHandled = true; performLeave() }
         } else {
             awaySince = nil; awayCountdown = nil
-            if leftHandled && rssi > Double(lockThreshold + 10) { leftHandled = false; performReturn() }
+            let back = useRadar ? radarReading?.occupied == true : rssi > Double(lockThreshold + 10)
+            if leftHandled && back { leftHandled = false; performReturn() }
         }
     }
 
     func performLeave(test: Bool = false) {
-        log("leave (test=\(test) linked=\(phoneLinked) rssi=\(Int(rssi)))")
+        log("leave (test=\(test) linked=\(phoneLinked) rssi=\(Int(rssi)) radar=\(radarStatus))")
         if pauseMediaOnLeave { SystemControl.pauseMedia() }
         if muteOnLeave && !SystemControl.isMuted { SystemControl.setMuted(true); mutedByUs = true }
         lastLeave = Date()
