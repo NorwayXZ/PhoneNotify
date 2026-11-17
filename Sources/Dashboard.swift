@@ -275,6 +275,7 @@ struct LeavePane: View {
                     Spacer()
                     if let c = m.awayCountdown { Text("\(c) 秒后执行").foregroundStyle(.orange).font(.headline.monospacedDigit()) }
                 }
+                if m.detectBy == 0 && m.leaveSeconds < 6 { Text("雷达最快约 6 秒能确认你离开。").font(.caption).foregroundStyle(.secondary) }
                 Toggle("暂停正在播放的视频、直播、音乐", isOn: $m.pauseMediaOnLeave)
                 Toggle("息屏（关闭显示器）", isOn: $m.sleepDisplayOnLeave)
                 Toggle("锁定屏幕", isOn: $m.autoLock)

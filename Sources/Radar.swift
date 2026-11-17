@@ -27,6 +27,8 @@ struct RadarReading: Equatable {
 }
 
 final class MiRadar {
+    /// Measured: the radar reports "no one" about this many seconds after its own no-one time.
+    static let sensorLag = 4
     static var configURL: URL {
         let d = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/PhoneNotify")
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)

@@ -145,7 +145,7 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             if r.occupied != self.lastOccupied { log("radar occupied=\(r.occupied.map { "\($0)" } ?? "?") dist=\(r.distance ?? -1)"); self.lastOccupied = r.occupied }
             self.radarReading = r
-            PresenceLog.shared.update(occupied: r.occupied, noOneDelay: r.noOneSeconds ?? self.leaveSeconds)
+            PresenceLog.shared.update(occupied: r.occupied, noOneDelay: (r.noOneSeconds ?? 2) + MiRadar.sensorLag)
             self.syncRadarDelay()
             self.radarStatus = r.occupied == true ? "有人" : r.occupied == false ? "无人" : "未知"
         }
@@ -462,7 +462,7 @@ final class AppModel: ObservableObject {
     private var lastRadarSync = Date.distantPast
     func syncRadarDelay(force: Bool = false) {
         guard radarEnabled, radarConfig != nil, let cur = radarReading?.noOneSeconds else { return }
-        let want = max(leaveSeconds, 2)
+        let want = max(leaveSeconds - MiRadar.sensorLag, 2)      // the sensor reports ~4 s later than its own setting
         guard cur != want, force || Date().timeIntervalSince(lastRadarSync) > 60 else { return }
         lastRadarSync = Date(); log("radar sync no-one time \(cur) -> \(want)")
         writeRadar(2, 2, want)
