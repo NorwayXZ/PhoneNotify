@@ -66,6 +66,23 @@ final class AppModel: ObservableObject {
     @Published var phoneAwayFor: Int?         // seconds the phone has looked "away"
     @Published var radarAwayFor: Int?
     @Published var leaveStatus = ""
+    @Published var browserPauseResult: [String] = []
+    @Published var pauseByKey = B("pauseByKey", true)                 { didSet { ud.set(pauseByKey, forKey: "pauseByKey") } }
+    @Published var muteIfStillPlaying = B("muteIfStillPlaying", true) { didSet { ud.set(muteIfStillPlaying, forKey: "muteIfStillPlaying") } }
+
+    /// Pause every player (Now Playing, scriptable apps, browser tabs, anything still making sound).
+    func pauseEverything(test: Bool = false) {
+        browserPauseResult = ["正在暂停…"]
+        Pauser.pauseAll { [weak self] report, still in
+            guard let self else { return }
+            self.browserPauseResult = report.isEmpty ? ["没有发现正在播放的内容"] : report
+            if still && self.muteIfStillPlaying && !test && !SystemControl.isMuted {
+                SystemControl.setMuted(true); self.mutedByUs = true
+                self.browserPauseResult.append("已静音兜底")
+                log("pauseAll: still sound -> muted")
+            }
+        }
+    }
 
     // settings (persisted)
     @Published var leaveEnabled = B("leaveEnabled", true)             { didSet { ud.set(leaveEnabled, forKey: "leaveEnabled"); resetLeave() } }
@@ -429,7 +446,7 @@ final class AppModel: ObservableObject {
             guard on, !doneActions.contains(id) else { return }
             if t >= delay { doneActions.insert(id); log("leave action \(id) at +\(t)s"); f() } else { pending.append(delay - t) }
         }
-        run("pause", pauseMediaOnLeave, 0) { SystemControl.pauseMedia() }
+        run("pause", pauseMediaOnLeave, 0) { pauseEverything() }
         run("mute", muteOnLeave, 0) { if !SystemControl.isMuted { SystemControl.setMuted(true); mutedByUs = true } }
         run("lock", autoLock, 0) { SystemControl.lockScreen() }
         run("sleep", sleepDisplayOnLeave, 0) { DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { SystemControl.sleepDisplay() } }
@@ -439,7 +456,7 @@ final class AppModel: ObservableObject {
 
     func performLeave(test: Bool = false) {
         log("leave (test=\(test) linked=\(phoneLinked) rssi=\(Int(rssi)) radar=\(radarStatus))")
-        if pauseMediaOnLeave { SystemControl.pauseMedia() }
+        if pauseMediaOnLeave { pauseEverything() }
         if muteOnLeave && !SystemControl.isMuted { SystemControl.setMuted(true); mutedByUs = true }
         lastLeave = Date()
         if autoLock { SystemControl.lockScreen() }

@@ -277,6 +277,21 @@ struct LeavePane: View {
                 }
                 if m.detectBy == 0 && m.leaveSeconds < 6 { Text("雷达最快约 6 秒能确认你离开。").font(.caption).foregroundStyle(.secondary) }
                 Toggle("暂停正在播放的视频、直播、音乐", isOn: $m.pauseMediaOnLeave)
+                if m.pauseMediaOnLeave {
+                    HStack {
+                        Text("包括浏览器所有标签页、抖音、音乐和视频播放器等").font(.caption).foregroundStyle(.secondary)
+                        Spacer()
+                        Button("现在测试暂停") { m.pauseEverything(test: true) }.controlSize(.small)
+                    }
+                    Toggle("其他还在出声的 App：发送空格键暂停", isOn: $m.pauseByKey).padding(.leading, 18)
+                    Toggle("暂停后仍有声音：自动静音", isOn: $m.muteIfStillPlaying).padding(.leading, 18)
+                    ForEach(m.browserPauseResult, id: \.self) { r in
+                        Text(r).font(.caption).foregroundStyle(r.contains("需要") ? .orange : .secondary)
+                    }
+                    if m.browserPauseResult.contains(where: { $0.contains("允许 Apple 事件") }) {
+                        Text("在该浏览器菜单栏选：查看 → 开发者 → 允许 Apple 事件中的 JavaScript（Safari：开发 → 允许来自 Apple 事件的 JavaScript）").font(.caption).foregroundStyle(.orange)
+                    }
+                }
                 Toggle("息屏（关闭显示器）", isOn: $m.sleepDisplayOnLeave)
                 Toggle("锁定屏幕", isOn: $m.autoLock)
                 Toggle("Mac 静音", isOn: $m.muteOnLeave)

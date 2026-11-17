@@ -22,6 +22,8 @@
 	<string>13.0</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>离开电脑时暂停浏览器里正在播放的视频和直播。</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>PhoneNotify — iPhone notifications on your Mac via ESP32-S3</string>
 </dict>

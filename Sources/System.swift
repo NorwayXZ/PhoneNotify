@@ -37,6 +37,76 @@ enum SystemControl {
         _ = unsafeBitCast(sym, to: Send.self)(1 /* kMRPause */, nil)
     }
 
+    /// Browsers often don't own "Now Playing" (several tabs, live streams, Chromium forks), so
+    /// also pause every playing <video>/<audio> in every tab of every running browser via AppleScript.
+    /// Chromium browsers need "View > Developer > Allow JavaScript from Apple Events"; Safari needs
+    /// "Develop > Allow JavaScript from Apple Events".
+    static let chromiumBrowsers = ["com.citrolabs.ego.lite", "com.google.Chrome", "com.microsoft.edgemac", "com.brave.Browser",
+                                   "com.vivaldi.Vivaldi", "company.thebrowser.Browser", "org.chromium.Chromium", "com.google.Chrome.canary"]
+    static let pauseJS = "(()=>{let n=0;const f=d=>{try{d.querySelectorAll('video,audio').forEach(m=>{if(!m.paused){m.pause();n++}});d.querySelectorAll('iframe').forEach(i=>{try{f(i.contentDocument)}catch(e){}})}catch(e){}};f(document);return n})()"
+
+    /// Returns per-browser results like "ego lite: 2" or "ego lite: 需要开启「允许 Apple 事件中的 JavaScript」".
+    static func pauseBrowsers(_ done: (([String]) -> Void)? = nil) {
+        let running = NSWorkspace.shared.runningApplications
+        var jobs: [(name: String, script: String)] = []
+        for app in running {
+            guard let id = app.bundleIdentifier else { continue }
+            let name = app.localizedName ?? id
+            if chromiumBrowsers.contains(id) {
+                jobs.append((name, """
+                set n to 0
+                set errs to ""
+                tell application id "\(id)"
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            try
+                                set n to n + (execute t javascript "\(pauseJS)")
+                            on error e
+                                set errs to e
+                            end try
+                        end repeat
+                    end repeat
+                end tell
+                if n = 0 and errs is not "" then return "ERR:" & errs
+                return n as text
+                """))
+            } else if id == "com.apple.Safari" {
+                jobs.append((name, """
+                set n to 0
+                set errs to ""
+                tell application id "com.apple.Safari"
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            try
+                                set n to n + (do JavaScript "\(pauseJS)" in t)
+                            on error e
+                                set errs to e
+                            end try
+                        end repeat
+                    end repeat
+                end tell
+                if n = 0 and errs is not "" then return "ERR:" & errs
+                return n as text
+                """))
+            }
+        }
+        guard !jobs.isEmpty else { done?([]); return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            var out: [String] = []
+            for j in jobs {
+                let res = Pauser.osascript(j.script)
+                let r = res.out.trimmingCharacters(in: .whitespacesAndNewlines)
+                if r == "timeout" { out.append("\(j.name): 等待授权超时（请在弹窗里允许 PhoneNotify 控制它）"); continue }
+                if r.contains("JavaScript") && (r.contains("ERR") || r.contains("error") || r.contains("错误")) { out.append("\(j.name): 需要开启「允许 Apple 事件中的 JavaScript」") }
+                else if r.contains("-1743") || r.contains("不允许") || r.contains("Not authorized") { out.append("\(j.name): 需要允许 PhoneNotify 控制此浏览器") }
+                else if let n = Int(r) { out.append("\(j.name): 暂停 \(n) 个") }
+                else { out.append("\(j.name): \(r.prefix(80))") }
+            }
+            log("pause browsers: \(out.joined(separator: " | "))")
+            DispatchQueue.main.async { done?(out) }
+        }
+    }
+
     static var isMuted: Bool {
         var err: NSDictionary?
         return NSAppleScript(source: "output muted of (get volume settings)")?.executeAndReturnError(&err).booleanValue ?? false

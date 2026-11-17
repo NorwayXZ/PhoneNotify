@@ -125,6 +125,7 @@ final class ClaudeServer {
                         let path = head.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
                         let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
                         if path.hasPrefix("/claude/") { self?.onEvent?(String(path.dropFirst(8)), json) }
+                        if path == "/test/pause" { DispatchQueue.main.async { AppModel.shared.pauseEverything(test: true) } }
                         c.send(content: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".data(using: .utf8),
                                completion: .contentProcessed { _ in c.cancel() })
                         return
