@@ -48,13 +48,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         act(m.mPlaying ? "暂停" : "播放", #selector(media(_:)), tag: 2)
         act("下一首", #selector(media(_:)), tag: 3)
         menu.addItem(.separator())
-        act("离开自动锁屏", #selector(toggleLock)); menu.items.last?.state = m.autoLock ? .on : .off
+        act("离开检测（暂停 / 静音 / 锁屏）", #selector(toggleLock)); menu.items.last?.state = m.leaveEnabled ? .on : .off
         act("打开控制面板…", #selector(openDashboard), ",")
         menu.addItem(.separator())
         let q = NSMenuItem(title: "退出", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q"); q.target = NSApp; menu.addItem(q)
     }
     @objc func media(_ s: NSMenuItem) { m.media(s.tag) }
-    @objc func toggleLock() { m.autoLock.toggle() }
+    @objc func toggleLock() { m.leaveEnabled.toggle() }
     @objc func openDashboard() { showDashboard() }
 
     func showDashboard() {

@@ -40,6 +40,7 @@ final class AppModel: ObservableObject {
     @Published var requestedPane: String?          // seconds left before leave actions fire
 
     // settings (persisted)
+    @Published var leaveEnabled = B("leaveEnabled", true)             { didSet { ud.set(leaveEnabled, forKey: "leaveEnabled"); if !leaveEnabled { awaySince = nil; awayCountdown = nil; leftHandled = false } } }
     @Published var pauseMediaOnLeave = B("pauseMediaOnLeave", true)   { didSet { ud.set(pauseMediaOnLeave, forKey: "pauseMediaOnLeave") } }
     @Published var muteOnLeave = B("muteOnLeave", false)              { didSet { ud.set(muteOnLeave, forKey: "muteOnLeave") } }
     @Published var autoLock = B("autoLock", true)                     { didSet { ud.set(autoLock, forKey: "autoLock") } }
@@ -86,7 +87,7 @@ final class AppModel: ObservableObject {
     private var rssiSamples = 0
     private var lowBatteryWarned = false
 
-    var anyLeaveAction: Bool { pauseMediaOnLeave || muteOnLeave || autoLock }
+    var anyLeaveAction: Bool { leaveEnabled && (pauseMediaOnLeave || muteOnLeave || autoLock) }
 
     private var historyURL: URL {
         let d = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/PhoneNotify")

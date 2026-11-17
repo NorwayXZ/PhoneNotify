@@ -232,8 +232,15 @@ struct HistoryPane: View {
 struct LeavePane: View {
     @EnvironmentObject var m: AppModel
     var body: some View {
-        Text("离开与返回").font(.largeTitle.bold())
-        Text("带着 iPhone 离开时（信号变弱或断开）自动执行。").foregroundStyle(.secondary)
+        HStack(alignment: .firstTextBaseline) {
+            Text("离开与返回").font(.largeTitle.bold())
+            Spacer()
+            Toggle("", isOn: $m.leaveEnabled).toggleStyle(.switch).controlSize(.large).labelsHidden()
+                .help(m.leaveEnabled ? "点击关闭整个离开检测" : "点击开启离开检测")
+        }
+        Text(m.leaveEnabled ? "已开启：带着 iPhone 离开时（信号变弱或断开）自动执行下面勾选的动作。"
+                            : "已关闭：不会因为你离开而暂停、静音或锁屏。").foregroundStyle(m.leaveEnabled ? .secondary : Color.orange)
+        Group {
 
         Card(title: "实时距离", icon: "location.fill") {
             HStack(spacing: 14) {
@@ -268,6 +275,9 @@ struct LeavePane: View {
             Toggle("恢复声音（仅限离开时由本程序静音的情况）", isOn: $m.unmuteOnReturn).disabled(!m.muteOnLeave)
             if let t = m.lastReturn { Text("上次回来：\(t.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.secondary) }
         }
+        }
+        .disabled(!m.leaveEnabled)
+        .opacity(m.leaveEnabled ? 1 : 0.45)
     }
 }
 
