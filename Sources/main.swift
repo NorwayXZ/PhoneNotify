@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         m.start()
         Banner.shared.onOpenHistory = { [weak self] in self?.m.requestedPane = "通知记录"; self?.showDashboard() }
         if LoginItem.enabled { LoginItem.enabled = true }   // refresh agent to the "--login" form
+        if let i = CommandLine.arguments.firstIndex(of: "--pane"), i + 1 < CommandLine.arguments.count { m.requestedPane = CommandLine.arguments[i + 1] }
         if !CommandLine.arguments.contains("--login") { showDashboard() }
     }
 

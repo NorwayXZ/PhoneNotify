@@ -21,6 +21,8 @@ struct RadarReading: Equatable {
     var lux: Double?              // 2.5
     var distance: Double?         // 3.3 metres
     var approach: Int?            // 3.1  0 stop 1 approach 2 aloof
+    var noOneSeconds: Int?        // 2.2 sensor's own "no one" judgement time
+    var rangeMeters: Int?         // 3.4 detection range 1-5 m
     var at = Date()
 }
 
@@ -59,13 +61,25 @@ final class MiRadar {
         t.resume(); timer = t
     }
 
+    /// Write one MIoT property on the sensor (through the gateway).
+    func set(siid: Int, piid: Int, value: Int) {
+        q.async {
+            guard let c = self.config else { return }
+            do {
+                if self.devId.isEmpty { try self.handshake(c) }
+                let r = try self.send(method: "set_properties", params: [["did": c.sensorDid, "siid": siid, "piid": piid, "value": value]])
+                log("radar set \(siid).\(piid)=\(value) -> \(r["result"] ?? "?")")
+            } catch { log("radar set failed: \(error)") }
+        }
+    }
+
     private func resetSession() { devId = Data(); failures = 0 }
 
     private func poll() {
         guard let c = config, c.gatewayToken.count == 32 else { return }
         do {
             if devId.isEmpty { try handshake(c) }
-            let props: [(Int, Int)] = [(2, 1), (2, 3), (2, 4), (2, 5), (3, 1), (3, 3)]
+            let props: [(Int, Int)] = [(2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (3, 1), (3, 3), (3, 4)]
             let params = props.map { ["did": c.sensorDid, "siid": $0.0, "piid": $0.1] as [String: Any] }
             let r = try send(method: "get_properties", params: params)
             guard let list = r["result"] as? [[String: Any]] else { throw err("网关返回异常") }
@@ -74,6 +88,8 @@ final class MiRadar {
                 let v = x["value"]; let key = "\(x["siid"] ?? 0).\(x["piid"] ?? 0)"
                 switch key {
                 case "2.1": if let n = v as? Int { rd.occupied = n == 1 ? true : n == 0 ? false : nil }
+                case "2.2": rd.noOneSeconds = v as? Int
+                case "3.4": rd.rangeMeters = v as? Int
                 case "2.3": rd.presentMinutes = v as? Int
                 case "2.4": rd.absentMinutes = v as? Int
                 case "2.5": rd.lux = (v as? NSNumber)?.doubleValue

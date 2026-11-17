@@ -42,10 +42,25 @@ final class AppModel: ObservableObject {
     @Published var radarConfig: RadarConfig? = MiRadar.loadConfig() { didSet { MiRadar.saveConfig(radarConfig); radar.config = radarConfig; radarReading = nil } }
     @Published var radarReading: RadarReading?
     @Published var radarStatus = "未配置"
-    @Published var radarMode = I("radarMode", 1)                      { didSet { ud.set(radarMode, forKey: "radarMode") } }   // 0 phone only, 1 radar only, 2 radar + phone
+    // leave detection sources (each configured on its own)
+    @Published var phoneEnabled = B("phoneEnabled", MiRadar.loadConfig() == nil) { didSet { ud.set(phoneEnabled, forKey: "phoneEnabled"); resetLeave() } }
+    @Published var phoneReturnRSSI = I("phoneReturnRSSI", -72)        { didSet { ud.set(phoneReturnRSSI, forKey: "phoneReturnRSSI") } }
+    @Published var phoneDisconnectIsAway = B("phoneDisconnectIsAway", true) { didSet { ud.set(phoneDisconnectIsAway, forKey: "phoneDisconnectIsAway") } }
+    @Published var radarEnabled = B("radarEnabled", true)             { didSet { ud.set(radarEnabled, forKey: "radarEnabled"); resetLeave() } }
+    @Published var radarLeaveSeconds = I("radarLeaveSeconds", 0)      { didSet { ud.set(radarLeaveSeconds, forKey: "radarLeaveSeconds") } }
+    @Published var radarFarMeters = ud.object(forKey: "radarFarMeters") as? Double ?? 0 { didSet { ud.set(radarFarMeters, forKey: "radarFarMeters") } }   // 0 = off
+    @Published var combineMode = I("combineMode", 0)                  { didSet { ud.set(combineMode, forKey: "combineMode") } }   // 0 all sources away, 1 any source away
+    @Published var pauseDelay = I("pauseDelay", 0)                    { didSet { ud.set(pauseDelay, forKey: "pauseDelay") } }
+    @Published var muteDelay = I("muteDelay", 0)                      { didSet { ud.set(muteDelay, forKey: "muteDelay") } }
+    @Published var lockDelay = I("lockDelay", 0)                      { didSet { ud.set(lockDelay, forKey: "lockDelay") } }
+    @Published var returnConfirmSeconds = I("returnConfirmSeconds", 0) { didSet { ud.set(returnConfirmSeconds, forKey: "returnConfirmSeconds") } }
+    // live leave state for the dashboard
+    @Published var phoneAwayFor: Int?         // seconds the phone has looked "away"
+    @Published var radarAwayFor: Int?
+    @Published var leaveStatus = ""
 
     // settings (persisted)
-    @Published var leaveEnabled = B("leaveEnabled", true)             { didSet { ud.set(leaveEnabled, forKey: "leaveEnabled"); if !leaveEnabled { awaySince = nil; awayCountdown = nil; leftHandled = false } } }
+    @Published var leaveEnabled = B("leaveEnabled", true)             { didSet { ud.set(leaveEnabled, forKey: "leaveEnabled"); resetLeave() } }
     @Published var pauseMediaOnLeave = B("pauseMediaOnLeave", true)   { didSet { ud.set(pauseMediaOnLeave, forKey: "pauseMediaOnLeave") } }
     @Published var muteOnLeave = B("muteOnLeave", false)              { didSet { ud.set(muteOnLeave, forKey: "muteOnLeave") } }
     @Published var autoLock = B("autoLock", true)                     { didSet { ud.set(autoLock, forKey: "autoLock") } }
@@ -343,27 +358,73 @@ final class AppModel: ObservableObject {
     func testTelegram() { lastForward = "发送中…"; bridge.send("TGTEST") }
 
     // MARK: leave / return
+    private var phoneAwaySince: Date?, radarAwaySince: Date?, backSince: Date?, leftAt: Date?
+    private var doneActions = Set<String>()
+
+    func resetLeave() {
+        phoneAwaySince = nil; radarAwaySince = nil; backSince = nil; leftAt = nil
+        phoneAwayFor = nil; radarAwayFor = nil; awayCountdown = nil; leftHandled = false; doneActions = []
+        leaveStatus = ""
+    }
+
+    var phoneActive: Bool { phoneEnabled && bridge.fd >= 0 && everLinked }
+    var radarActive: Bool { radarEnabled && radarFresh }
+
     func evaluateAway() {
-        let phoneOK = bridge.fd >= 0 && everLinked
-        let useRadar = radarMode > 0 && radarFresh
-        let usePhone = radarMode != 1 || !useRadar          // radar-only falls back to the phone if radar data is stale
-        guard anyLeaveAction, useRadar || (usePhone && phoneOK) else { awaySince = nil; awayCountdown = nil; return }
-        let phoneAway = !phoneLinked || rssi < Double(lockThreshold)
-        let radarAway = radarReading?.occupied == false
-        let away: Bool
-        if useRadar && radarMode == 1 { away = radarAway }
-        else if useRadar { away = radarAway && (!phoneOK || phoneAway) }
-        else { away = phoneAway }
-        if away {
-            if awaySince == nil { awaySince = Date() }
-            let elapsed = Date().timeIntervalSince(awaySince!)
-            awayCountdown = leftHandled ? nil : max(0, awayDelay - Int(elapsed))
-            if !leftHandled && elapsed >= Double(awayDelay) { leftHandled = true; performLeave() }
-        } else {
-            awaySince = nil; awayCountdown = nil
-            let back = useRadar ? radarReading?.occupied == true : rssi > Double(lockThreshold + 10)
-            if leftHandled && back { leftHandled = false; performReturn() }
+        guard anyLeaveAction else { if leaveStatus != "" || leftHandled { resetLeave() }; return }
+        let now = Date()
+        // iPhone signal
+        var phoneAway = false, phoneBack = false
+        if phoneActive {
+            let raw = (phoneDisconnectIsAway && !phoneLinked) || (phoneLinked && rssi < Double(lockThreshold))
+            if raw { if phoneAwaySince == nil { phoneAwaySince = now } } else { phoneAwaySince = nil }
+            phoneAwayFor = phoneAwaySince.map { Int(now.timeIntervalSince($0)) }
+            phoneAway = (phoneAwayFor ?? -1) >= awayDelay
+            phoneBack = phoneLinked && rssi > Double(phoneReturnRSSI)
+        } else { phoneAwaySince = nil; phoneAwayFor = nil }
+        // radar
+        var radarAway = false, radarBack = false
+        if radarActive, let r = radarReading {
+            let far = radarFarMeters > 0 && (r.distance ?? 0) > radarFarMeters
+            let raw = r.occupied == false || far
+            if raw { if radarAwaySince == nil { radarAwaySince = now } } else { radarAwaySince = nil }
+            radarAwayFor = radarAwaySince.map { Int(now.timeIntervalSince($0)) }
+            radarAway = (radarAwayFor ?? -1) >= radarLeaveSeconds
+            radarBack = r.occupied == true && !far
+        } else { radarAwaySince = nil; radarAwayFor = nil }
+
+        var sources: [(away: Bool, back: Bool)] = []
+        if phoneActive { sources.append((phoneAway, phoneBack)) }
+        if radarActive { sources.append((radarAway, radarBack)) }
+        guard !sources.isEmpty else {
+            leaveStatus = (phoneEnabled || radarEnabled) ? "检测源暂时不可用（iPhone 未连接 / 雷达读不到）" : "没有启用任何检测方式"
+            awayCountdown = nil; return
         }
+        let all = combineMode == 0
+        let left = all ? sources.allSatisfy { $0.away } : sources.contains { $0.away }
+        let back = all ? sources.contains { $0.back } : sources.allSatisfy { $0.back }
+
+        if !leftHandled {
+            if left { leftHandled = true; leftAt = now; doneActions = []; backSince = nil; lastLeave = now
+                      log("leave detected (phone=\(phoneActive ? "\(phoneAway) rssi=\(Int(rssi))" : "off") radar=\(radarActive ? "\(radarAway) \(radarStatus)" : "off"))") }
+            else { leaveStatus = "在座"; awayCountdown = nil; return }
+        }
+        // left: run each action at its own delay, until the user is back
+        if back && !left {
+            if backSince == nil { backSince = now }
+            if now.timeIntervalSince(backSince!) >= Double(returnConfirmSeconds) { performReturn(); return }
+        } else { backSince = nil }
+        let t = Int(now.timeIntervalSince(leftAt ?? now))
+        var pending: [Int] = []
+        func run(_ id: String, _ on: Bool, _ delay: Int, _ f: () -> Void) {
+            guard on, !doneActions.contains(id) else { return }
+            if t >= delay { doneActions.insert(id); log("leave action \(id) at +\(t)s"); f() } else { pending.append(delay - t) }
+        }
+        run("pause", pauseMediaOnLeave, pauseDelay) { SystemControl.pauseMedia() }
+        run("mute", muteOnLeave, muteDelay) { if !SystemControl.isMuted { SystemControl.setMuted(true); mutedByUs = true } }
+        run("lock", autoLock, lockDelay) { SystemControl.lockScreen() }
+        awayCountdown = pending.min()
+        leaveStatus = pending.isEmpty ? "已离开 \(t) 秒" : "已离开 \(t) 秒，\(pending.min()!) 秒后执行下一个动作"
     }
 
     func performLeave(test: Bool = false) {
@@ -379,6 +440,10 @@ final class AppModel: ObservableObject {
         if mutedByUs && unmuteOnReturn { SystemControl.setMuted(false) }
         mutedByUs = false
         lastReturn = Date()
+        resetLeave()
         if wakeOnReturn { SystemControl.wakeDisplay() }
     }
+
+    // sensor-side settings (written to the radar through the gateway)
+    func writeRadar(_ siid: Int, _ piid: Int, _ value: Int) { radar.set(siid: siid, piid: piid, value: value) }
 }
