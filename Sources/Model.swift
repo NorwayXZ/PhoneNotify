@@ -194,6 +194,16 @@ final class AppModel: ObservableObject {
             let uid = num("uid")?.uint32Value ?? 0, cat = num("cat")?.intValue ?? 0
             let app = str("app"), title = str("title"), sub = str("sub"), msg = str("msg")
             let isCall = cat == 1
+            if cat == 2 {
+                missedRemoved.removeAll { Date().timeIntervalSince($0.at) > 8 }
+                if let i = missedRemoved.firstIndex(where: { $0.title == title }) {
+                    let old = missedRemoved.remove(at: i)
+                    missedTitle[uid] = title; missedAlias[uid] = old.uid
+                    log("missed call re-added by iOS, not shown again: uid \(uid) -> \(old.uid)")
+                    return
+                }
+                missedTitle[uid] = title
+            }
             let verdict = classify(app: app, title: title, msg: sub + " " + msg, isCall: isCall)
             if verdict == .hide { bridge.send("R \(uid)"); log("hidden by rule"); return }
             if isCall { activeCalls.append(uid) }
@@ -210,7 +220,20 @@ final class AppModel: ObservableObject {
             if history.count > 300 { history.removeLast(history.count - 300) }
             saveHistory()
         case "d":
-            if let uid = num("uid")?.uint32Value { NotificationPoster.shared.remove(uid: uid); activeCalls.removeAll { $0 == uid } }
+            guard let uid = num("uid")?.uint32Value else { break }
+            activeCalls.removeAll { $0 == uid }
+            if let title = missedTitle.removeValue(forKey: uid) {
+                // wait a moment: if iOS re-adds it, keep the Mac notification instead of removing and re-showing it
+                let posted = missedAlias.removeValue(forKey: uid) ?? uid
+                missedRemoved.append((title, posted, Date()))
+                DispatchQueue.main.asyncAfter(deadline: .now() + 8.5) { [weak self] in
+                    guard let self else { return }
+                    if self.missedRemoved.contains(where: { $0.uid == posted }) {
+                        self.missedRemoved.removeAll { $0.uid == posted }
+                        NotificationPoster.shared.remove(uid: posted)
+                    }
+                }
+            } else { NotificationPoster.shared.remove(uid: uid) }
         case "bat":
             let v = num("v")?.intValue ?? 0
             battery = v
@@ -338,6 +361,10 @@ final class AppModel: ObservableObject {
     }
     var activeCallUid: UInt32? { activeCalls.last }
     var activeCalls: [UInt32] = []
+    // iOS drops and re-adds every missed-call notification after each call; recognise the re-adds.
+    private var missedTitle: [UInt32: String] = [:]            // phone uid -> title of a missed call shown on the Mac
+    private var missedAlias: [UInt32: UInt32] = [:]            // new phone uid -> uid the Mac notification was posted under
+    private var missedRemoved: [(title: String, uid: UInt32, at: Date)] = []
 
     // MARK: Claude Code
     func claudeEvent(_ st: String, _ j: [String: Any]) {
