@@ -194,12 +194,17 @@ final class AppModel: ObservableObject {
             let uid = num("uid")?.uint32Value ?? 0, cat = num("cat")?.intValue ?? 0
             let app = str("app"), title = str("title"), sub = str("sub"), msg = str("msg")
             let isCall = cat == 1
+            knownUids.insert(uid)
+            if isCall { callTitle[uid] = title }
             if cat == 2 {
                 missedRemoved.removeAll { Date().timeIntervalSince($0.at) > 8 }
-                if let i = missedRemoved.firstIndex(where: { $0.title == title }) {
+                endedCalls.removeAll { Date().timeIntervalSince($0.at) > 20 }
+                let justMissed = endedCalls.firstIndex { $0.title == title }
+                if let j = justMissed { endedCalls.remove(at: j) }      // the call that just rang: a real new missed call
+                else if let i = missedRemoved.firstIndex(where: { $0.title == title }) ?? missedRemoved.firstIndex(where: { $0.title == nil }) {
                     let old = missedRemoved.remove(at: i)
-                    missedTitle[uid] = title; missedAlias[uid] = old.uid
-                    log("missed call re-added by iOS, not shown again: uid \(uid) -> \(old.uid)")
+                    missedTitle[uid] = title; if let o = old.uid { missedAlias[uid] = o }
+                    log("missed call re-added by iOS, not shown again: uid \(uid)")
                     return
                 }
                 missedTitle[uid] = title
@@ -222,6 +227,11 @@ final class AppModel: ObservableObject {
         case "d":
             guard let uid = num("uid")?.uint32Value else { break }
             activeCalls.removeAll { $0 == uid }
+            if let t = callTitle.removeValue(forKey: uid) { endedCalls.append((t, Date())) }
+            if knownUids.remove(uid) == nil {
+                missedRemoved.append((nil, nil, Date()))               // removed before we ever saw it (pre-existing)
+                break
+            }
             if let title = missedTitle.removeValue(forKey: uid) {
                 // wait a moment: if iOS re-adds it, keep the Mac notification instead of removing and re-showing it
                 let posted = missedAlias.removeValue(forKey: uid) ?? uid
@@ -288,6 +298,7 @@ final class AppModel: ObservableObject {
             case "advertising", "disconnected":
                 if s == "advertising" && !phoneLinked { everLinked = false }   // board rebooted
                 link = .waiting; statusText = "等待 iPhone 连接（iPhone 需在附近）"; phoneLinked = false
+                knownUids.removeAll(); missedTitle.removeAll(); missedAlias.removeAll(); callTitle.removeAll()   // ANCS uids are per connection
             case "connected", "encrypted":
                 link = .pairing; statusText = "iPhone 已连接，正在建立通知通道…"
             case "auth_failed", "retry_pairing":
@@ -364,7 +375,10 @@ final class AppModel: ObservableObject {
     // iOS drops and re-adds every missed-call notification after each call; recognise the re-adds.
     private var missedTitle: [UInt32: String] = [:]            // phone uid -> title of a missed call shown on the Mac
     private var missedAlias: [UInt32: UInt32] = [:]            // new phone uid -> uid the Mac notification was posted under
-    private var missedRemoved: [(title: String, uid: UInt32, at: Date)] = []
+    private var missedRemoved: [(title: String?, uid: UInt32?, at: Date)] = []   // nil title = a notification the Mac never saw (pre-existing)
+    private var callTitle: [UInt32: String] = [:]              // incoming-call uid -> caller
+    private var endedCalls: [(title: String, at: Date)] = []
+    private var knownUids = Set<UInt32>()
 
     // MARK: Claude Code
     func claudeEvent(_ st: String, _ j: [String: Any]) {
